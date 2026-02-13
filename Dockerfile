@@ -1,9 +1,10 @@
-FROM rust:1.93-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-bookworm-1 AS chef
 RUN cargo install cargo-chef
 WORKDIR /usr/src/rpcproxy
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -12,7 +13,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY src ./src
 RUN cargo build --release
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
