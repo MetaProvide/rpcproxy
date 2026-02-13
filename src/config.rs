@@ -28,7 +28,8 @@ pub struct Config {
     pub cache_max_size: u64,
 
     /// Bearer token for authenticating RPC requests. If set, all RPC requests
-    /// must include `Authorization: Bearer <token>`. Health/status endpoints are not protected.
+    /// must be sent to `POST /<token>`. The `/readiness` and `/status` endpoints
+    /// require `Authorization: Bearer <token>`. The `/health` endpoint is not protected.
     #[arg(long, env = "RPCPROXY_TOKEN")]
     pub token: Option<String>,
 

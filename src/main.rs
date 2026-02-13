@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
 use axum::routing::{get, post};
@@ -104,7 +105,12 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Readiness probe — same as health but returns JSON detail.
-async fn readiness_handler(State(state): State<AppState>) -> impl IntoResponse {
+async fn readiness_handler(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if !check_bearer_token(&state, &headers) {
+        warn!("unauthorized readiness request (missing or bad token)");
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "Unauthorized" })));
+    }
+
     let statuses = state.upstream.backend_statuses().await;
     let ok = statuses.iter().any(|s| s.state == "Healthy" && s.latest_block.is_some());
 
@@ -121,7 +127,15 @@ async fn readiness_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Detailed status endpoint showing all targets, their states, and usage statistics.
-async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
+async fn status_handler(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    if !check_bearer_token(&state, &headers) {
+        warn!("unauthorized status request (missing or bad token)");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "Unauthorized" })),
+        );
+    }
+
     let statuses = state.upstream.backend_statuses().await;
     let cache_entries = state.cache.entry_count().await;
 
@@ -136,6 +150,17 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     });
 
     (StatusCode::OK, Json(body))
+}
+
+/// Returns true if no token is configured or if the Authorization header matches.
+fn check_bearer_token(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(expected) = &state.token else { return true };
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|t| t == expected.as_str())
+        .unwrap_or(false)
 }
 
 /// RPC handler for token-authenticated path: POST /<token>

@@ -85,8 +85,8 @@ services:
 | `POST /` | POST | No | JSON-RPC proxy when no token is set |
 | `POST /<token>` | POST | Yes | JSON-RPC proxy when `--token` is set |
 | `/health` | GET | No | Returns `200 ok` if ≥1 backend has real block data, else `503` |
-| `/readiness` | GET | No | JSON response with backend details and overall status |
-| `/status` | GET | No | Detailed JSON: all backends, states, request counts, cache stats |
+| `/readiness` | GET | Bearer | JSON response with backend details and overall status |
+| `/status` | GET | Bearer | Detailed JSON: all backends, states, request counts, cache stats |
 
 ### Authentication
 
@@ -105,7 +105,8 @@ curl -X POST http://localhost:9000/my-secret-token -d '{...}'
 curl -X POST http://localhost:9000 -d '{...}'
 ```
 
-Health, readiness, and status endpoints are **not** protected.
+The `/health` endpoint is **not** protected (for Docker HEALTHCHECK).
+When a token is set, `/readiness` and `/status` require an `Authorization: Bearer <token>` header.
 
 ### Status response example
 
