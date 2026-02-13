@@ -16,21 +16,21 @@ pub async fn token_rpc_handler(
     Path(path_token): Path<String>,
     body: String,
 ) -> impl IntoResponse {
-    if let Some(expected_token) = &state.token {
-        if path_token != *expected_token {
-            warn!("unauthorized RPC request (bad token path)");
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(
-                    serde_json::to_value(JsonRpcResponse::error(
-                        serde_json::Value::Null,
-                        -32000,
-                        "Unauthorized",
-                    ))
-                    .unwrap(),
-                ),
-            );
-        }
+    if let Some(expected_token) = &state.token
+        && path_token != *expected_token
+    {
+        warn!("unauthorized RPC request (bad token path)");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(
+                serde_json::to_value(JsonRpcResponse::error(
+                    serde_json::Value::Null,
+                    -32000,
+                    "Unauthorized",
+                ))
+                .unwrap(),
+            ),
+        );
     }
     dispatch_rpc(&state, body).await
 }
@@ -100,12 +100,12 @@ async fn handle_single_request(state: &AppState, request: JsonRpcRequest) -> Jso
         }
 
         // Check for in-flight request (coalescing)
-        if let Some(mut rx) = state.cache.subscribe_inflight(&cache_key).await {
-            if let Ok(resp) = rx.recv().await {
-                let mut resp = (*resp).clone();
-                resp.id = original_id;
-                return resp;
-            }
+        if let Some(mut rx) = state.cache.subscribe_inflight(&cache_key).await
+            && let Ok(resp) = rx.recv().await
+        {
+            let mut resp = (*resp).clone();
+            resp.id = original_id;
+            return resp;
         }
     }
 

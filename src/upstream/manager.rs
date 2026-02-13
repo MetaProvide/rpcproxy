@@ -188,16 +188,18 @@ impl UpstreamManager {
         if let Some(best) = best_block {
             for backend_lock in &self.backends {
                 let mut backend = backend_lock.write().await;
-                if let Some(block) = backend.latest_block {
-                    if best > block && best - block > 10 && backend.state == BackendState::Healthy {
-                        backend.state = BackendState::Degraded;
-                        warn!(
-                            backend = %backend.url,
-                            block = %block,
-                            best_block = %best,
-                            "backend is stale, marking degraded"
-                        );
-                    }
+                if let Some(block) = backend.latest_block
+                    && best > block
+                    && best - block > 10
+                    && backend.state == BackendState::Healthy
+                {
+                    backend.state = BackendState::Degraded;
+                    warn!(
+                        backend = %backend.url,
+                        block = %block,
+                        best_block = %best,
+                        "backend is stale, marking degraded"
+                    );
                 }
             }
         }
