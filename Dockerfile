@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-bookworm-1 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
 RUN cargo install cargo-chef
 WORKDIR /usr/src/rpcproxy
 
