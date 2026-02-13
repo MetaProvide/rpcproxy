@@ -1,11 +1,3 @@
-mod cache;
-mod config;
-mod error;
-mod handler;
-mod health;
-mod jsonrpc;
-mod upstream;
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,16 +6,22 @@ use axum::Router;
 use clap::Parser;
 use tracing::info;
 
-use cache::RpcCache;
-use config::Config;
-use handler::AppState;
-use upstream::UpstreamManager;
+use rpcproxy::cache::RpcCache;
+use rpcproxy::config::Config;
+use rpcproxy::handler;
+use rpcproxy::handler::AppState;
+use rpcproxy::health;
+use rpcproxy::upstream::UpstreamManager;
 
 #[tokio::main]
 async fn main() {
     let config = Config::parse();
 
-    let log_level = if config.verbose { "debug,hyper=info,reqwest=info" } else { "warn,rpcproxy=info" };
+    let log_level = if config.verbose {
+        "debug,hyper=info,reqwest=info"
+    } else {
+        "warn,rpcproxy=info"
+    };
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

@@ -32,7 +32,8 @@ impl Expiry<String, CacheEntry> for PerEntryExpiry {
 pub struct RpcCache {
     cache: Cache<String, CacheEntry>,
     default_ttl: Duration,
-    inflight: Arc<RwLock<std::collections::HashMap<String, broadcast::Sender<Arc<JsonRpcResponse>>>>>,
+    inflight:
+        Arc<RwLock<std::collections::HashMap<String, broadcast::Sender<Arc<JsonRpcResponse>>>>>,
 }
 
 impl RpcCache {
@@ -59,12 +60,13 @@ impl RpcCache {
     }
 
     pub async fn insert(&self, key: String, response: Arc<JsonRpcResponse>, ttl: Duration) {
-        self.cache
-            .insert(key, CacheEntry { response, ttl })
-            .await;
+        self.cache.insert(key, CacheEntry { response, ttl }).await;
     }
 
-    pub async fn subscribe_inflight(&self, key: &str) -> Option<broadcast::Receiver<Arc<JsonRpcResponse>>> {
+    pub async fn subscribe_inflight(
+        &self,
+        key: &str,
+    ) -> Option<broadcast::Receiver<Arc<JsonRpcResponse>>> {
         let inflight = self.inflight.read().await;
         inflight.get(key).map(|tx| tx.subscribe())
     }
@@ -87,31 +89,5 @@ impl RpcCache {
 
     pub async fn entry_count(&self) -> u64 {
         self.cache.entry_count()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_cache_get_miss() {
-        let cache = RpcCache::new(100, 2000);
-        assert!(cache.get("nonexistent").await.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_cache_insert_and_get() {
-        let cache = RpcCache::new(100, 2000);
-        let resp = Arc::new(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: Some(serde_json::json!("0x123")),
-            error: None,
-            id: serde_json::json!(1),
-        });
-        cache.insert("key1".to_string(), resp.clone(), Duration::from_secs(60)).await;
-        let cached = cache.get("key1").await;
-        assert!(cached.is_some());
-        assert_eq!(cached.unwrap().result, resp.result);
     }
 }

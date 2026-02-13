@@ -21,9 +21,14 @@ pub async fn token_rpc_handler(
             warn!("unauthorized RPC request (bad token path)");
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(serde_json::to_value(
-                    JsonRpcResponse::error(serde_json::Value::Null, -32000, "Unauthorized"),
-                ).unwrap()),
+                Json(
+                    serde_json::to_value(JsonRpcResponse::error(
+                        serde_json::Value::Null,
+                        -32000,
+                        "Unauthorized",
+                    ))
+                    .unwrap(),
+                ),
             );
         }
     }
@@ -31,26 +36,25 @@ pub async fn token_rpc_handler(
 }
 
 /// RPC handler for open access: POST /
-pub async fn open_rpc_handler(
-    State(state): State<AppState>,
-    body: String,
-) -> impl IntoResponse {
+pub async fn open_rpc_handler(State(state): State<AppState>, body: String) -> impl IntoResponse {
     if state.token.is_some() {
         warn!("unauthorized RPC request (missing token path)");
         return (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::to_value(
-                JsonRpcResponse::error(serde_json::Value::Null, -32000, "Unauthorized"),
-            ).unwrap()),
+            Json(
+                serde_json::to_value(JsonRpcResponse::error(
+                    serde_json::Value::Null,
+                    -32000,
+                    "Unauthorized",
+                ))
+                .unwrap(),
+            ),
         );
     }
     dispatch_rpc(&state, body).await
 }
 
-async fn dispatch_rpc(
-    state: &AppState,
-    body: String,
-) -> (StatusCode, Json<serde_json::Value>) {
+async fn dispatch_rpc(state: &AppState, body: String) -> (StatusCode, Json<serde_json::Value>) {
     let parsed = match serde_json::from_str::<JsonRpcBody>(&body) {
         Ok(parsed) => parsed,
         Err(_) => {
@@ -70,7 +74,10 @@ async fn dispatch_rpc(
                 let resp = handle_single_request(state, request).await;
                 responses.push(resp);
             }
-            (StatusCode::OK, Json(serde_json::to_value(responses).unwrap()))
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(responses).unwrap()),
+            )
         }
     }
 }
@@ -119,7 +126,10 @@ async fn handle_single_request(state: &AppState, request: JsonRpcRequest) -> Jso
             if should_cache && response.error.is_none() {
                 let ttl = cache_policy::ttl_for_request(&request, state.cache.default_ttl());
                 let cached = Arc::new(response.clone());
-                state.cache.insert(cache_key.clone(), cached.clone(), ttl).await;
+                state
+                    .cache
+                    .insert(cache_key.clone(), cached.clone(), ttl)
+                    .await;
 
                 if let Some(tx) = tx {
                     let _ = tx.send(cached);

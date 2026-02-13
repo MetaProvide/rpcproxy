@@ -13,7 +13,11 @@ impl JsonRpcRequest {
     pub fn cache_key(&self) -> String {
         let mut params = self.params.clone();
         normalize_value(&mut params);
-        format!("{}:{}", self.method, serde_json::to_string(&params).unwrap_or_default())
+        format!(
+            "{}:{}",
+            self.method,
+            serde_json::to_string(&params).unwrap_or_default()
+        )
     }
 
     pub fn is_valid(&self) -> bool {

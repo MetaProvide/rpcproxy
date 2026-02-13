@@ -9,19 +9,28 @@ use crate::upstream::UpstreamManager;
 
 pub async fn start_health_checker(upstream: Arc<UpstreamManager>, interval_secs: u64) {
     let interval = Duration::from_secs(interval_secs);
+    let notify = upstream.health_notify();
+
     info!(interval_secs = %interval_secs, "starting health checker");
 
+    upstream.check_all_backends(probe_backend_url).await;
+
     let mut ticker = time::interval(interval);
-    // Skip the first immediate tick
     ticker.tick().await;
 
     loop {
-        ticker.tick().await;
-        upstream.check_all_backends(|url| probe_backend(url)).await;
+        tokio::select! {
+            _ = ticker.tick() => {},
+            _ = notify.notified() => {
+                info!("reactive health check triggered (backend went down)");
+                ticker.reset();
+            },
+        }
+        upstream.check_all_backends(probe_backend_url).await;
     }
 }
 
-async fn probe_backend(url: String) -> Result<u64, RpcProxyError> {
+pub async fn probe_backend_url(url: String) -> Result<u64, RpcProxyError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()

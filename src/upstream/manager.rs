@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
 use tracing::{debug, error, warn};
 
 use crate::error::RpcProxyError;
@@ -13,6 +13,7 @@ use super::backend::{BackendHealthInfo, BackendState, BackendStatus};
 pub struct UpstreamManager {
     backends: Vec<Arc<RwLock<BackendStatus>>>,
     client: Client,
+    health_notify: Arc<Notify>,
 }
 
 impl UpstreamManager {
@@ -28,10 +29,17 @@ impl UpstreamManager {
             .map(|url| Arc::new(RwLock::new(BackendStatus::new(url))))
             .collect();
 
-        Self { backends, client }
+        Self {
+            backends,
+            client,
+            health_notify: Arc::new(Notify::new()),
+        }
     }
 
-    pub async fn send_request(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, RpcProxyError> {
+    pub async fn send_request(
+        &self,
+        request: &JsonRpcRequest,
+    ) -> Result<JsonRpcResponse, RpcProxyError> {
         for backend_lock in &self.backends {
             let (url, state) = {
                 let backend = backend_lock.read().await;
@@ -55,7 +63,11 @@ impl UpstreamManager {
                 Err(e) => {
                     let mut backend = backend_lock.write().await;
                     backend.record_error();
-                    warn!(backend = %url, error = %e, state = ?backend.state, "upstream error, trying next");
+                    let state = backend.state;
+                    warn!(backend = %url, error = %e, state = ?state, "upstream error, trying next");
+                    if state == BackendState::Down {
+                        self.health_notify.notify_one();
+                    }
                 }
             }
         }
@@ -135,6 +147,11 @@ impl UpstreamManager {
         false
     }
 
+    /// Returns a handle to the notify used to trigger reactive health checks.
+    pub fn health_notify(&self) -> Arc<Notify> {
+        self.health_notify.clone()
+    }
+
     /// Runs a health probe on each backend and updates their state.
     /// Used by the health checker — keeps backend mutation encapsulated.
     pub async fn check_all_backends<F, Fut>(&self, probe: F)
@@ -172,16 +189,14 @@ impl UpstreamManager {
             for backend_lock in &self.backends {
                 let mut backend = backend_lock.write().await;
                 if let Some(block) = backend.latest_block {
-                    if best > block && best - block > 10 {
-                        if backend.state == BackendState::Healthy {
-                            backend.state = BackendState::Degraded;
-                            warn!(
-                                backend = %backend.url,
-                                block = %block,
-                                best_block = %best,
-                                "backend is stale, marking degraded"
-                            );
-                        }
+                    if best > block && best - block > 10 && backend.state == BackendState::Healthy {
+                        backend.state = BackendState::Degraded;
+                        warn!(
+                            backend = %backend.url,
+                            block = %block,
+                            best_block = %best,
+                            "backend is stale, marking degraded"
+                        );
                     }
                 }
             }
