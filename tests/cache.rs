@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rpcproxy::cache::policy::{self, IMMUTABLE_TTL_SECS};
 use rpcproxy::cache::RpcCache;
+use rpcproxy::cache::policy::{self, IMMUTABLE_TTL_SECS};
 use rpcproxy::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
 const IMMUTABLE_TTL: Duration = Duration::from_secs(IMMUTABLE_TTL_SECS);

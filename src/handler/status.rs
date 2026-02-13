@@ -3,8 +3,8 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use tracing::warn;
 
-use super::auth::check_bearer_token;
 use super::AppState;
+use super::auth::check_bearer_token;
 
 /// Lightweight health check for Docker HEALTHCHECK.
 /// Returns 200 only if at least one backend is healthy AND has returned a real block number.
