@@ -4,18 +4,30 @@ High-performance JSON-RPC reverse proxy written in Rust. Designed as a drop-in r
 
 ## Features
 
-- **Priority-based failover** — routes requests through ordered upstream RPCs, skipping unhealthy backends
+- **Priority-based failover** — routes requests through ordered upstream RPCs, automatically skipping unhealthy backends
+- **Reactive health checking** — backends that fail during normal traffic trigger an immediate health probe instead of waiting for the next periodic interval
 - **Smart caching** — method-aware TTLs (immutable data cached for 1 hour, chain-tip data for configurable TTL)
 - **Request coalescing** — deduplicates identical in-flight requests to reduce upstream load
-- **Active health checking** — periodic `eth_blockNumber` probes detect stale or down backends
+- **Stale block detection** — backends reporting blocks far behind the best known block are marked degraded
 - **URL path token auth** — optional token as URL path (like GetBlock) so clients that can only provide a URL (e.g. Bee) can authenticate
 - **Batch JSON-RPC** — full support for batched requests
 - **Verbose mode** — toggle between detailed debug logs and quiet production logging
-- **Docker ready** — built-in `HEALTHCHECK` that validates at least one backend returns real block data
+- **Docker ready** — multi-arch image with built-in `HEALTHCHECK`
 
 ## Quick Start
 
-### Docker (recommended)
+### Download a binary
+
+Pre-built binaries for Linux, macOS, and Windows are attached to each [GitHub Release](https://github.com/MetaProvide/rpcproxy/releases).
+
+```bash
+# Example: Linux amd64
+curl -LO https://github.com/MetaProvide/rpcproxy/releases/latest/download/rpcproxy-linux-amd64
+chmod +x rpcproxy-linux-amd64
+./rpcproxy-linux-amd64 --targets https://rpc.gnosis.gateway.fm --verbose
+```
+
+### Docker
 
 ```bash
 docker pull ghcr.io/metaprovide/rpcproxy:latest
@@ -40,7 +52,7 @@ All options can be set via CLI flags or environment variables.
 | `--port` | `RPCPROXY_PORT` | `9000` | Port to listen on |
 | `--targets` | `RPCPROXY_TARGETS` | `http://localhost:8545` | Comma-separated upstream RPC URLs (priority order) |
 | `--cache-ttl` | `RPCPROXY_CACHE_TTL` | `2000` | Default cache TTL in milliseconds |
-| `--health-interval` | `RPCPROXY_HEALTH_INTERVAL` | `10` | Health check interval in seconds |
+| `--health-interval` | `RPCPROXY_HEALTH_INTERVAL` | `1800` | Health check interval in seconds |
 | `--request-timeout` | `RPCPROXY_REQUEST_TIMEOUT` | `10` | Upstream request timeout in seconds |
 | `--cache-max-size` | `RPCPROXY_CACHE_MAX_SIZE` | `10000` | Maximum number of cached entries |
 | `--token` | `RPCPROXY_TOKEN` | _(none)_ | Token for URL-path authentication (see below) |
@@ -130,7 +142,30 @@ When a token is set, `/readiness` and `/status` require an `Authorization: Beare
 }
 ```
 
-## Caching Strategy
+## How It Works
+
+### Failover
+
+Backends are tried in the order they are listed in `--targets`. If a backend returns an error, the next one is tried. After all backends have been attempted, the first backend gets one last-resort retry. A backend is marked **Down** after 3 consecutive errors and is skipped entirely until the health checker restores it.
+
+### Reactive Health Checking
+
+Health checking runs in two modes simultaneously:
+
+1. **Periodic** — every `--health-interval` seconds, all backends are probed with `eth_blockNumber`
+2. **Reactive** — when a backend transitions to **Down** during normal request forwarding, the health checker is immediately notified and re-probes all backends without waiting for the next interval
+
+This ensures that a recovered backend is discovered within seconds rather than waiting up to 30 minutes (the default interval).
+
+### Backend States
+
+| State | Meaning |
+|-------|---------|
+| **Healthy** | Responding normally |
+| **Degraded** | Responding, but latest block is >10 blocks behind the best backend |
+| **Down** | 3+ consecutive errors; skipped for traffic until health check restores it |
+
+### Caching Strategy
 
 | Category | TTL | Examples |
 |----------|-----|---------|
@@ -139,21 +174,53 @@ When a token is set, `/readiness` and `/status` require an `Authorization: Beare
 | **Chain-tip** | `--cache-ttl` | `eth_blockNumber`, `eth_gasPrice`, `eth_getBalance` |
 | **Never cached** | — | `eth_sendRawTransaction`, `personal_sign`, `debug_*` |
 
-## Verbose Mode
+Identical in-flight requests are coalesced — only one upstream call is made, and all waiting clients receive the same response.
 
-- **Off (default)**: logs startup info, backend state changes, errors, and warnings only
-- **On (`-v`)**: adds per-request debug logs — cache hits/misses, upstream selection, latencies, health check probes
+## Logging
 
-`RUST_LOG` env var always takes precedence if set.
+- **Default**: startup info, backend state changes, errors, and warnings only
+- **Verbose (`-v`)**: per-request debug logs — cache hits/misses, upstream selection, latencies, health check probes
 
-## Building the Docker Image
+`RUST_LOG` env var takes precedence if set.
+
+## Development
+
+### Build
+
+```bash
+cargo build --release
+```
+
+### Test
+
+```bash
+cargo test
+```
+
+Tests cover configuration, JSON-RPC parsing, cache policy, backend state machine, upstream failover, HTTP handler auth/routing, and reactive health checking. All tests use [wiremock](https://docs.rs/wiremock) for deterministic mock servers.
+
+### Lint
+
+```bash
+cargo clippy --all-targets -- -D warnings
+cargo fmt --all -- --check
+```
+
+### Build Docker Image
 
 ```bash
 docker build -t rpcproxy:latest .
 ```
 
 The Dockerfile uses a multi-stage build with [cargo-chef](https://github.com/LukeMathWalker/cargo-chef) for dependency layer caching.
-Subsequent builds after dependency changes are fast because only your source code is recompiled.
+
+## CI/CD
+
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| **CI** | Push / PR to `main` | `cargo check`, `cargo fmt`, `cargo clippy`, `cargo test` |
+| **Release Binaries** | GitHub Release published | Builds binaries for Linux (amd64/arm64), macOS (amd64/arm64), Windows (amd64) and attaches them to the release |
+| **Docker Image** | Tag push / Release | Builds and pushes multi-arch Docker image to `ghcr.io/metaprovide/rpcproxy` |
 
 ## License
 
