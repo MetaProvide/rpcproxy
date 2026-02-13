@@ -6,6 +6,7 @@ use reqwest::Client;
 use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 
+use crate::error::RpcProxyError;
 use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +96,7 @@ impl UpstreamManager {
         Self { backends, client }
     }
 
-    pub async fn send_request(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, ()> {
+    pub async fn send_request(&self, request: &JsonRpcRequest) -> Result<JsonRpcResponse, RpcProxyError> {
         for backend_lock in &self.backends {
             let (url, state) = {
                 let backend = backend_lock.read().await;
@@ -138,16 +139,15 @@ impl UpstreamManager {
         }
 
         error!("all upstream backends failed");
-        Err(())
+        Err(RpcProxyError::AllUpstreamsFailed)
     }
 
     async fn forward_to_backend(
         &self,
         url: &str,
         request: &JsonRpcRequest,
-    ) -> Result<JsonRpcResponse, String> {
-        let body = serde_json::to_string(request)
-            .map_err(|e| format!("serialize error: {e}"))?;
+    ) -> Result<JsonRpcResponse, RpcProxyError> {
+        let body = serde_json::to_string(request)?;
 
         let resp = self
             .client
@@ -156,16 +156,18 @@ impl UpstreamManager {
             .body(body)
             .send()
             .await
-            .map_err(|e| format!("request error: {e}"))?;
+            .map_err(|e| RpcProxyError::UpstreamRequest(e.to_string()))?;
 
         if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
+            return Err(RpcProxyError::UpstreamHttp(resp.status().as_u16()));
         }
 
-        let text = resp.text().await.map_err(|e| format!("body read error: {e}"))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| RpcProxyError::BodyRead(e.to_string()))?;
 
-        let rpc_response: JsonRpcResponse = serde_json::from_str(&text)
-            .map_err(|e| format!("invalid JSON-RPC response: {e}"))?;
+        let rpc_response: JsonRpcResponse = serde_json::from_str(&text)?;
 
         Ok(rpc_response)
     }

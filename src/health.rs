@@ -4,6 +4,7 @@ use std::time::Duration;
 use tokio::time;
 use tracing::{debug, info, warn};
 
+use crate::error::RpcProxyError;
 use crate::upstream::{BackendState, UpstreamManager};
 
 pub async fn start_health_checker(upstream: Arc<UpstreamManager>, interval_secs: u64) {
@@ -67,11 +68,11 @@ async fn check_all_backends(upstream: &UpstreamManager) {
     }
 }
 
-async fn probe_backend(url: &str) -> Result<u64, String> {
+async fn probe_backend(url: &str) -> Result<u64, RpcProxyError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|e| format!("client build error: {e}"))?;
+        .map_err(|e| RpcProxyError::HealthProbe(format!("client build: {e}")))?;
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -86,24 +87,24 @@ async fn probe_backend(url: &str) -> Result<u64, String> {
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("request error: {e}"))?;
+        .map_err(|e| RpcProxyError::UpstreamRequest(e.to_string()))?;
 
     if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
+        return Err(RpcProxyError::UpstreamHttp(resp.status().as_u16()));
     }
 
     let json: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("json parse error: {e}"))?;
+        .map_err(|e| RpcProxyError::BodyRead(e.to_string()))?;
 
     let result = json
         .get("result")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing result field".to_string())?;
+        .ok_or_else(|| RpcProxyError::HealthProbe("missing result field".into()))?;
 
     let block = u64::from_str_radix(result.trim_start_matches("0x"), 16)
-        .map_err(|e| format!("invalid block number: {e}"))?;
+        .map_err(|e| RpcProxyError::HealthProbe(format!("invalid block number: {e}")))?;
 
     Ok(block)
 }

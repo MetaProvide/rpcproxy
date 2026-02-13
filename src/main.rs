@@ -1,5 +1,6 @@
 mod cache;
 mod config;
+mod error;
 mod health;
 mod jsonrpc;
 mod upstream;
@@ -258,11 +259,11 @@ async fn handle_single_request(state: &AppState, request: JsonRpcRequest) -> Jso
 
             response
         }
-        Err(()) => {
+        Err(e) => {
             if let Some(_tx) = tx {
                 state.cache.remove_inflight(&cache_key).await;
             }
-            error!("all upstreams failed for method={}", request.method);
+            error!(method = %request.method, error = %e, "all upstreams failed");
             JsonRpcResponse::internal_error(request.id)
         }
     }
