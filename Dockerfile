@@ -1,5 +1,4 @@
 FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
-RUN cargo install cargo-chef
 WORKDIR /usr/src/rpcproxy
 
 FROM chef AS planner
@@ -13,10 +12,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY src ./src
 RUN cargo build --release
 
-FROM debian:trixie-slim
-
-RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
-
+FROM debian:trixie-slim AS runtime
 COPY --from=builder /usr/src/rpcproxy/target/release/rpcproxy /usr/local/bin/rpcproxy
 
 USER nobody
