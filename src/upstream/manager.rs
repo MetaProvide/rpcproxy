@@ -2,81 +2,16 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
-
 use tokio::sync::RwLock;
 use tracing::{debug, error, warn};
 
 use crate::error::RpcProxyError;
 use crate::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BackendState {
-    Healthy,
-    Degraded,
-    Down,
-}
-
-#[derive(Debug)]
-pub struct BackendStatus {
-    pub url: String,
-    pub state: BackendState,
-    pub consecutive_errors: u32,
-    pub consecutive_successes: u32,
-    pub last_error_at: Option<Instant>,
-    pub last_success_at: Option<Instant>,
-    pub latest_block: Option<u64>,
-    pub avg_latency_ms: f64,
-    pub total_requests: u64,
-    pub total_errors: u64,
-    pub started_at: Instant,
-}
-
-impl BackendStatus {
-    pub fn new(url: String) -> Self {
-        Self {
-            url,
-            state: BackendState::Healthy,
-            consecutive_errors: 0,
-            consecutive_successes: 0,
-            last_error_at: None,
-            last_success_at: None,
-            latest_block: None,
-            avg_latency_ms: 0.0,
-            total_requests: 0,
-            total_errors: 0,
-            started_at: Instant::now(),
-        }
-    }
-
-    pub fn record_success(&mut self, latency_ms: f64) {
-        self.total_requests += 1;
-        self.consecutive_errors = 0;
-        self.consecutive_successes += 1;
-        self.last_success_at = Some(Instant::now());
-        self.state = BackendState::Healthy;
-        if self.avg_latency_ms == 0.0 {
-            self.avg_latency_ms = latency_ms;
-        } else {
-            self.avg_latency_ms = self.avg_latency_ms * 0.8 + latency_ms * 0.2;
-        }
-    }
-
-    pub fn record_error(&mut self) {
-        self.total_requests += 1;
-        self.total_errors += 1;
-        self.consecutive_successes = 0;
-        self.consecutive_errors += 1;
-        self.last_error_at = Some(Instant::now());
-        if self.consecutive_errors >= 3 {
-            self.state = BackendState::Down;
-        } else {
-            self.state = BackendState::Degraded;
-        }
-    }
-}
+use super::backend::{BackendHealthInfo, BackendState, BackendStatus};
 
 pub struct UpstreamManager {
-    pub backends: Vec<Arc<RwLock<BackendStatus>>>,
+    backends: Vec<Arc<RwLock<BackendStatus>>>,
     client: Client,
 }
 
@@ -199,53 +134,57 @@ impl UpstreamManager {
         }
         false
     }
-}
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct BackendHealthInfo {
-    pub url: String,
-    pub priority: usize,
-    pub state: String,
-    pub latency_ms: f64,
-    pub latest_block: Option<u64>,
-    pub total_requests: u64,
-    pub total_errors: u64,
-    pub uptime_secs: u64,
-}
+    /// Runs a health probe on each backend and updates their state.
+    /// Used by the health checker — keeps backend mutation encapsulated.
+    pub async fn check_all_backends<F, Fut>(&self, probe: F)
+    where
+        F: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = Result<u64, RpcProxyError>>,
+    {
+        let mut best_block: Option<u64> = None;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+        for backend_lock in &self.backends {
+            let url = backend_lock.read().await.url.clone();
+            match probe(url.clone()).await {
+                Ok(block_number) => {
+                    let mut backend = backend_lock.write().await;
+                    backend.latest_block = Some(block_number);
+                    backend.record_success(0.0);
+                    debug!(backend = %url, block = %block_number, "health check passed");
 
-    #[test]
-    fn test_backend_state_transitions() {
-        let mut backend = BackendStatus::new("http://localhost:8545".to_string());
-        assert_eq!(backend.state, BackendState::Healthy);
+                    match best_block {
+                        Some(best) if block_number > best => best_block = Some(block_number),
+                        None => best_block = Some(block_number),
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    let mut backend = backend_lock.write().await;
+                    backend.record_error();
+                    warn!(backend = %url, error = %e, state = ?backend.state, "health check failed");
+                }
+            }
+        }
 
-        backend.record_error();
-        assert_eq!(backend.state, BackendState::Degraded);
-        assert_eq!(backend.consecutive_errors, 1);
-
-        backend.record_error();
-        assert_eq!(backend.state, BackendState::Degraded);
-
-        backend.record_error();
-        assert_eq!(backend.state, BackendState::Down);
-        assert_eq!(backend.consecutive_errors, 3);
-
-        backend.record_success(50.0);
-        assert_eq!(backend.state, BackendState::Healthy);
-        assert_eq!(backend.consecutive_errors, 0);
-    }
-
-    #[test]
-    fn test_latency_tracking() {
-        let mut backend = BackendStatus::new("http://localhost:8545".to_string());
-        backend.record_success(100.0);
-        assert_eq!(backend.avg_latency_ms, 100.0);
-
-        backend.record_success(200.0);
-        // 100 * 0.8 + 200 * 0.2 = 120
-        assert!((backend.avg_latency_ms - 120.0).abs() < 0.01);
+        // Mark backends with stale blocks as degraded
+        if let Some(best) = best_block {
+            for backend_lock in &self.backends {
+                let mut backend = backend_lock.write().await;
+                if let Some(block) = backend.latest_block {
+                    if best > block && best - block > 10 {
+                        if backend.state == BackendState::Healthy {
+                            backend.state = BackendState::Degraded;
+                            warn!(
+                                backend = %backend.url,
+                                block = %block,
+                                best_block = %best,
+                                "backend is stale, marking degraded"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }

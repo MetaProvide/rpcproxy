@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::time;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use crate::error::RpcProxyError;
-use crate::upstream::{BackendState, UpstreamManager};
+use crate::upstream::UpstreamManager;
 
 pub async fn start_health_checker(upstream: Arc<UpstreamManager>, interval_secs: u64) {
     let interval = Duration::from_secs(interval_secs);
@@ -17,58 +17,11 @@ pub async fn start_health_checker(upstream: Arc<UpstreamManager>, interval_secs:
 
     loop {
         ticker.tick().await;
-        check_all_backends(&upstream).await;
+        upstream.check_all_backends(|url| probe_backend(url)).await;
     }
 }
 
-async fn check_all_backends(upstream: &UpstreamManager) {
-    let mut best_block: Option<u64> = None;
-
-    for backend_lock in &upstream.backends {
-        let url = backend_lock.read().await.url.clone();
-        match probe_backend(&url).await {
-            Ok(block_number) => {
-                let mut backend = backend_lock.write().await;
-                backend.latest_block = Some(block_number);
-                backend.record_success(0.0);
-                debug!(backend = %url, block = %block_number, "health check passed");
-
-                match best_block {
-                    Some(best) if block_number > best => best_block = Some(block_number),
-                    None => best_block = Some(block_number),
-                    _ => {}
-                }
-            }
-            Err(e) => {
-                let mut backend = backend_lock.write().await;
-                backend.record_error();
-                warn!(backend = %url, error = %e, state = ?backend.state, "health check failed");
-            }
-        }
-    }
-
-    // Mark backends with stale blocks as degraded
-    if let Some(best) = best_block {
-        for backend_lock in &upstream.backends {
-            let mut backend = backend_lock.write().await;
-            if let Some(block) = backend.latest_block {
-                if best > block && best - block > 10 {
-                    if backend.state == BackendState::Healthy {
-                        backend.state = BackendState::Degraded;
-                        warn!(
-                            backend = %backend.url,
-                            block = %block,
-                            best_block = %best,
-                            "backend is stale, marking degraded"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-async fn probe_backend(url: &str) -> Result<u64, RpcProxyError> {
+async fn probe_backend(url: String) -> Result<u64, RpcProxyError> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -82,7 +35,7 @@ async fn probe_backend(url: &str) -> Result<u64, RpcProxyError> {
     });
 
     let resp = client
-        .post(url)
+        .post(&url)
         .header("content-type", "application/json")
         .json(&body)
         .send()
