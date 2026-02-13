@@ -16,7 +16,7 @@ pub struct Config {
     pub cache_ttl: u64,
 
     /// Health check interval in seconds
-    #[arg(long, env = "RPCPROXY_HEALTH_INTERVAL", default_value = "10")]
+    #[arg(long, env = "RPCPROXY_HEALTH_INTERVAL", default_value = "1800")]
     pub health_interval: u64,
 
     /// Upstream request timeout in seconds
@@ -49,7 +49,7 @@ mod tests {
         assert_eq!(config.port, 9000);
         assert_eq!(config.targets, vec!["http://localhost:8545"]);
         assert_eq!(config.cache_ttl, 2000);
-        assert_eq!(config.health_interval, 10);
+        assert_eq!(config.health_interval, 1800);
         assert_eq!(config.request_timeout, 10);
         assert_eq!(config.cache_max_size, 10000);
         assert!(config.token.is_none());
