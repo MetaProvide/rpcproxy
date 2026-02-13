@@ -1,9 +1,17 @@
-FROM rust:1.86-bookworm AS builder
-
+FROM rust:1.86-bookworm AS chef
+RUN cargo install cargo-chef
 WORKDIR /usr/src/rpcproxy
+
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
 
+FROM chef AS builder
+COPY --from=planner /usr/src/rpcproxy/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
 RUN cargo build --release
 
 FROM debian:bookworm-slim

@@ -7,10 +7,10 @@ mod upstream;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
 use tracing::{error, info, warn};
@@ -51,6 +51,10 @@ async fn main() {
         "starting rpcproxy"
     );
 
+    if let Some(ref t) = token {
+        info!(path = %format!("/{t}"), "token auth enabled via URL path");
+    }
+
     let upstream = Arc::new(UpstreamManager::new(
         config.targets.clone(),
         Duration::from_secs(config.request_timeout),
@@ -74,7 +78,8 @@ async fn main() {
         .route("/health", get(health_handler))
         .route("/readiness", get(readiness_handler))
         .route("/status", get(status_handler))
-        .fallback(rpc_handler)
+        .route("/{token}", post(token_rpc_handler))
+        .fallback(post(open_rpc_handler))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", config.port);
@@ -132,22 +137,15 @@ async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     (StatusCode::OK, Json(body))
 }
 
-async fn rpc_handler(
+/// RPC handler for token-authenticated path: POST /<token>
+async fn token_rpc_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Path(path_token): Path<String>,
     body: String,
 ) -> impl IntoResponse {
-    // Token authentication
     if let Some(expected_token) = &state.token {
-        let authorized = headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|t| t == expected_token.as_str())
-            .unwrap_or(false);
-
-        if !authorized {
-            warn!("unauthorized RPC request");
+        if path_token != *expected_token {
+            warn!("unauthorized RPC request (bad token path)");
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::to_value(
@@ -156,7 +154,30 @@ async fn rpc_handler(
             );
         }
     }
+    dispatch_rpc(&state, body).await
+}
 
+/// RPC handler for open access: POST /
+async fn open_rpc_handler(
+    State(state): State<AppState>,
+    body: String,
+) -> impl IntoResponse {
+    if state.token.is_some() {
+        warn!("unauthorized RPC request (missing token path)");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::to_value(
+                JsonRpcResponse::error(serde_json::Value::Null, -32000, "Unauthorized"),
+            ).unwrap()),
+        );
+    }
+    dispatch_rpc(&state, body).await
+}
+
+async fn dispatch_rpc(
+    state: &AppState,
+    body: String,
+) -> (StatusCode, Json<serde_json::Value>) {
     let parsed = match serde_json::from_str::<JsonRpcBody>(&body) {
         Ok(parsed) => parsed,
         Err(_) => {
@@ -167,13 +188,13 @@ async fn rpc_handler(
 
     match parsed {
         JsonRpcBody::Single(request) => {
-            let resp = handle_single_request(&state, request).await;
+            let resp = handle_single_request(state, request).await;
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
         }
         JsonRpcBody::Batch(requests) => {
             let mut responses = Vec::with_capacity(requests.len());
             for request in requests {
-                let resp = handle_single_request(&state, request).await;
+                let resp = handle_single_request(state, request).await;
                 responses.push(resp);
             }
             (StatusCode::OK, Json(serde_json::to_value(responses).unwrap()))
