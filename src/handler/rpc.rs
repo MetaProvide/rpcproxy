@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json};
 use tracing::{error, warn};
 
@@ -9,36 +9,44 @@ use crate::cache::policy as cache_policy;
 use crate::jsonrpc::{JsonRpcBody, JsonRpcRequest, JsonRpcResponse};
 
 use super::AppState;
+use super::auth::check_bearer_token;
 
 /// RPC handler for token-authenticated path: POST /<token>
 pub async fn token_rpc_handler(
     State(state): State<AppState>,
     Path(path_token): Path<String>,
+    headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    if let Some(expected_token) = &state.token
-        && path_token != *expected_token
-    {
-        warn!("unauthorized RPC request (bad token path)");
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(
-                serde_json::to_value(JsonRpcResponse::error(
-                    serde_json::Value::Null,
-                    -32000,
-                    "Unauthorized",
-                ))
-                .unwrap(),
-            ),
-        );
+    if let Some(expected_token) = &state.token {
+        let path_valid = path_token == *expected_token;
+        let header_valid = check_bearer_token(&state, &headers);
+        if !path_valid && !header_valid {
+            warn!("unauthorized RPC request (bad token path and no valid bearer)");
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(
+                    serde_json::to_value(JsonRpcResponse::error(
+                        serde_json::Value::Null,
+                        -32000,
+                        "Unauthorized",
+                    ))
+                    .unwrap(),
+                ),
+            );
+        }
     }
     dispatch_rpc(&state, body).await
 }
 
 /// RPC handler for open access: POST /
-pub async fn open_rpc_handler(State(state): State<AppState>, body: String) -> impl IntoResponse {
-    if state.token.is_some() {
-        warn!("unauthorized RPC request (missing token path)");
+pub async fn open_rpc_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: String,
+) -> impl IntoResponse {
+    if state.token.is_some() && !check_bearer_token(&state, &headers) {
+        warn!("unauthorized RPC request (missing or bad bearer token)");
         return (
             StatusCode::UNAUTHORIZED,
             Json(

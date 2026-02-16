@@ -1,5 +1,5 @@
 use clap::Parser;
-use rpcproxy::config::Config;
+use rpcproxy::config::{Config, validate_token};
 
 #[test]
 fn defaults() {
@@ -39,4 +39,31 @@ fn cli_overrides() {
     assert_eq!(config.request_timeout, 20);
     assert_eq!(config.cache_max_size, 50000);
     assert_eq!(config.token, Some("secret123".to_string()));
+}
+
+#[test]
+fn token_validation_accepts_valid_tokens() {
+    assert!(validate_token("simple").is_ok());
+    assert!(validate_token("with-dash").is_ok());
+    assert!(validate_token("with_underscore").is_ok());
+    assert!(validate_token("with.dot").is_ok());
+    assert!(validate_token("with~tilde").is_ok());
+    assert!(validate_token("ABC123xyz-_.~test").is_ok());
+    assert!(validate_token("1234567890").is_ok());
+}
+
+#[test]
+fn token_validation_rejects_empty() {
+    assert!(validate_token("").is_err());
+}
+
+#[test]
+fn token_validation_rejects_invalid_chars() {
+    assert!(validate_token("has space").is_err());
+    assert!(validate_token("has/slash").is_err());
+    assert!(validate_token("has?question").is_err());
+    assert!(validate_token("has#hash").is_err());
+    assert!(validate_token("has!bang").is_err());
+    assert!(validate_token("has@at").is_err());
+    assert!(validate_token("has%percent").is_err());
 }

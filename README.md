@@ -9,7 +9,8 @@ High-performance JSON-RPC reverse proxy written in Rust. Designed as a drop-in r
 - **Smart caching** — method-aware TTLs (immutable data cached for 1 hour, chain-tip data for configurable TTL)
 - **Request coalescing** — deduplicates identical in-flight requests to reduce upstream load
 - **Stale block detection** — backends reporting blocks far behind the best known block are marked degraded
-- **URL path token auth** — optional token as URL path (like GetBlock) so clients that can only provide a URL (e.g. Bee) can authenticate
+- **URL path token auth** — optional token as URL path so clients that can only provide a URL (e.g. Bee) can authenticate
+- **Bearer token auth** — standard `Authorization: Bearer <token>` header support
 - **Batch JSON-RPC** — full support for batched requests
 - **Verbose mode** — toggle between detailed debug logs and quiet production logging
 - **Docker ready** — multi-arch image with built-in `HEALTHCHECK`
@@ -24,7 +25,8 @@ Pre-built binaries for Linux, macOS, and Windows are attached to each [GitHub Re
 # Example: Linux amd64
 curl -LO https://github.com/MetaProvide/rpcproxy/releases/latest/download/rpcproxy-linux-amd64
 chmod +x rpcproxy-linux-amd64
-./rpcproxy-linux-amd64 --targets https://rpc.gnosis.gateway.fm --verbose
+mv rpcproxy-linux-amd64 rpcproxy
+./rpcproxy --targets https://rpc.gnosis.gateway.fm --verbose
 ```
 
 ### Docker
@@ -94,27 +96,24 @@ services:
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `POST /` | POST | No | JSON-RPC proxy when no token is set |
-| `POST /<token>` | POST | Yes | JSON-RPC proxy when `--token` is set |
+| `POST /` | POST | Bearer | JSON-RPC proxy when `--token` is set |
+| `POST /<token>` | POST | Path | JSON-RPC proxy when `--token` is set |
 | `/health` | GET | No | Returns `200 ok` if ≥1 backend has real block data, else `503` |
 | `/readiness` | GET | Bearer | JSON response with backend details and overall status |
 | `/status` | GET | Bearer | Detailed JSON: all backends, states, request counts, cache stats |
 
 ### Authentication
 
-When `--token` is set, the token becomes a **URL path segment**. This design lets
-clients that can only provide a URL (like Bee nodes) authenticate without custom headers,
-similar to how [GetBlock](https://getblock.io) works:
+When `--token` is set, RPC requests can authenticate in two ways:
 
-```text
-# No token set → open access
-curl -X POST http://localhost:9000 -d '{...}'
-
-# Token set → must use path
+**1. URL Path Token**
+```bash
 curl -X POST http://localhost:9000/my-secret-token -d '{...}'
+```
 
-# Without token path → 401 Unauthorized
-curl -X POST http://localhost:9000 -d '{...}'
+**2. Bearer Header**
+```bash
+curl -X POST http://localhost:9000 -H "Authorization: Bearer my-secret-token" -d '{...}'
 ```
 
 The `/health` endpoint is **not** protected (for Docker HEALTHCHECK).

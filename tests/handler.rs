@@ -75,6 +75,107 @@ async fn auth_rejects_open_endpoint_when_token_set() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// Token-protected proxy accepts requests on open endpoint with valid Bearer header.
+#[tokio::test]
+async fn auth_accepts_bearer_header_on_open_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_response("0xabc")))
+        .mount(&server)
+        .await;
+
+    let app = setup(&server.uri(), Some("secret")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer secret")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["result"], "0xabc");
+}
+
+/// Token-protected proxy rejects open endpoint with wrong Bearer header.
+#[tokio::test]
+async fn auth_rejects_wrong_bearer_header_on_open_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_response("0x1")))
+        .mount(&server)
+        .await;
+
+    let app = setup(&server.uri(), Some("secret")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer wrong")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Token-protected proxy accepts requests on token path with valid Bearer header (even if path token is wrong).
+#[tokio::test]
+async fn auth_accepts_bearer_header_on_token_path() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_response("0xdef")))
+        .mount(&server)
+        .await;
+
+    let app = setup(&server.uri(), Some("secret")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/wrong-token")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer secret")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["result"], "0xdef");
+}
+
 /// Token-protected proxy rejects requests with wrong token path.
 #[tokio::test]
 async fn auth_rejects_wrong_token_path() {

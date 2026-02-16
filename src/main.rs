@@ -7,7 +7,7 @@ use clap::Parser;
 use tracing::info;
 
 use rpcproxy::cache::RpcCache;
-use rpcproxy::config::Config;
+use rpcproxy::config::{Config, validate_token};
 use rpcproxy::handler;
 use rpcproxy::handler::AppState;
 use rpcproxy::health;
@@ -16,6 +16,13 @@ use rpcproxy::upstream::UpstreamManager;
 #[tokio::main]
 async fn main() {
     let config = Config::parse();
+
+    if let Some(ref token) = config.token
+        && let Err(e) = validate_token(token)
+    {
+        eprintln!("error: invalid token: {e}");
+        std::process::exit(1);
+    }
 
     let log_level = if config.verbose {
         "debug,hyper=info,reqwest=info"

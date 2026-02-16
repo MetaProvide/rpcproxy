@@ -32,9 +32,11 @@ pub struct Config {
     #[arg(long, env = "RPCPROXY_CACHE_MAX_SIZE", default_value = "10000")]
     pub cache_max_size: u64,
 
-    /// Bearer token for authenticating RPC requests. If set, all RPC requests
-    /// must be sent to `POST /<token>`. The `/readiness` and `/status` endpoints
-    /// require `Authorization: Bearer <token>`. The `/health` endpoint is not protected.
+    /// Token for authenticating requests. If set, RPC requests require either
+    /// the token in the URL path (`POST /<token>`) or a Bearer header
+    /// (`Authorization: Bearer <token>`). The `/readiness` and `/status` endpoints
+    /// require the Bearer header. The `/health` endpoint is not protected.
+    /// Token must contain only alphanumeric, -, _, ., or ~ characters.
     #[arg(long, env = "RPCPROXY_TOKEN")]
     pub token: Option<String>,
 
@@ -43,4 +45,21 @@ pub struct Config {
     /// When off, only critical messages and status changes are logged.
     #[arg(short, long, env = "RPCPROXY_VERBOSE", default_value = "false")]
     pub verbose: bool,
+}
+
+pub fn validate_token(token: &str) -> Result<(), String> {
+    if token.is_empty() {
+        return Err("token cannot be empty".to_string());
+    }
+    let invalid: String = token
+        .chars()
+        .filter(|c| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '.' | '~'))
+        .collect();
+    if !invalid.is_empty() {
+        return Err(format!(
+            "token contains invalid characters: '{}'. Only alphanumeric, -, _, ., and ~ are allowed",
+            invalid
+        ));
+    }
+    Ok(())
 }
