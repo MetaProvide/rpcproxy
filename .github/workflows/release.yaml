@@ -109,5 +109,5 @@ jobs:
           labels: |
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ steps.meta.outputs.repo_owner }}/rpcproxy:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ steps.meta.outputs.repo_owner }}/rpcproxy:buildcache,mode=max
