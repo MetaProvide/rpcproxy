@@ -17,7 +17,12 @@ use rpcproxy::upstream::UpstreamManager;
 async fn main() {
     let config = Config::parse();
 
+    if config.health {
+        std::process::exit(health::run_health_check(config.port));
+    }
+
     if let Some(ref token) = config.token
+        && !token.is_empty()
         && let Err(e) = validate_token(token)
     {
         eprintln!("error: invalid token: {e}");

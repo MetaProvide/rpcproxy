@@ -1,3 +1,5 @@
+use std::io::Write;
+use std::net::TcpStream;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -69,4 +71,42 @@ pub async fn probe_backend_url(url: String) -> Result<u64, RpcProxyError> {
         .map_err(|e| RpcProxyError::HealthProbe(format!("invalid block number: {e}")))?;
 
     Ok(block)
+}
+
+
+/// Perform an HTTP health check against the running instance using only std.
+/// Returns 0 if the server responds with HTTP 200, 1 otherwise.
+/// Used by `rpcproxy --health` for Docker HEALTHCHECK without curl.
+pub fn run_health_check(port: u16) -> i32 {
+    let addr = format!("127.0.0.1:{port}");
+    let timeout = Duration::from_secs(5);
+
+    let mut stream = match TcpStream::connect_timeout(&addr.parse().unwrap(), timeout) {
+        Ok(s) => s,
+        Err(_) => return 1,
+    };
+
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+
+    let request = format!(
+        "GET /health HTTP/1.1\r\nHost: localhost:{port}\r\nConnection: close\r\n\r\n"
+    );
+    if stream.write_all(request.as_bytes()).is_err() {
+        return 1;
+    }
+
+    // Read enough bytes to capture the HTTP status line.
+    let mut buf = [0u8; 32];
+    let n = match std::io::Read::read(&mut stream, &mut buf) {
+        Ok(n) if n > 0 => n,
+        _ => return 1,
+    };
+
+    let response = String::from_utf8_lossy(&buf[..n]);
+    if response.contains("200") {
+        0
+    } else {
+        1
+    }
 }

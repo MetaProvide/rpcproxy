@@ -1,5 +1,5 @@
 use clap::Parser;
-use rpcproxy::config::{Config, validate_token};
+use rpcproxy::config::{validate_token, Config};
 
 #[test]
 fn defaults() {
@@ -11,6 +11,7 @@ fn defaults() {
     assert_eq!(config.request_timeout, 10);
     assert_eq!(config.cache_max_size, 10000);
     assert!(config.token.is_none());
+    assert!(!config.health);
 }
 
 #[test]
@@ -66,4 +67,17 @@ fn token_validation_rejects_invalid_chars() {
     assert!(validate_token("has!bang").is_err());
     assert!(validate_token("has@at").is_err());
     assert!(validate_token("has%percent").is_err());
+}
+
+#[test]
+fn health_flag_parsed() {
+    let config = Config::parse_from(["rpcproxy", "--health"]);
+    assert!(config.health);
+}
+
+#[test]
+fn health_flag_with_custom_port() {
+    let config = Config::parse_from(["rpcproxy", "--health", "--port", "7777"]);
+    assert!(config.health);
+    assert_eq!(config.port, 7777);
 }

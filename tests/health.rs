@@ -1,9 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
+use axum::routing::get;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+use rpcproxy::health;
 use rpcproxy::jsonrpc::JsonRpcRequest;
 use rpcproxy::upstream::UpstreamManager;
 
@@ -167,4 +170,63 @@ async fn checker_reacts_to_notify_signal() {
         upstream.has_healthy_backend_with_block().await,
         "health checker should have reactively re-probed and recovered the backend"
     );
+}
+
+// ---------------------------------------------------------------------------
+// CLI health check (run_health_check)
+// ---------------------------------------------------------------------------
+
+/// run_health_check returns 1 when nothing is listening on the port.
+#[test]
+fn health_check_fails_when_no_server() {
+    // Use a port that is very unlikely to have anything listening
+    assert_eq!(health::run_health_check(19091), 1);
+}
+
+/// run_health_check returns 0 when a server responds 200 on /health.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health_check_succeeds_against_healthy_server() {
+    async fn ok_handler() -> &'static str {
+        "ok"
+    }
+
+    let app = Router::new().route("/health", get(ok_handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let result = tokio::task::spawn_blocking(move || health::run_health_check(port))
+        .await
+        .unwrap();
+    assert_eq!(result, 0);
+}
+
+/// run_health_check returns 1 when the server responds with a non-200 status.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn health_check_fails_against_unhealthy_server() {
+    use axum::http::StatusCode;
+
+    async fn unavailable_handler() -> (StatusCode, &'static str) {
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    }
+
+    let app = Router::new().route("/health", get(unavailable_handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let result = tokio::task::spawn_blocking(move || health::run_health_check(port))
+        .await
+        .unwrap();
+    assert_eq!(result, 1);
 }

@@ -28,10 +28,11 @@ async fn setup(server_uri: &str, token: Option<&str>) -> Router {
         Duration::from_secs(5),
     ));
     let cache = RpcCache::new(1000, 2000);
+    // Mirror main.rs: treat empty token as no token
     let state = AppState {
         upstream,
         cache,
-        token: token.map(|t| t.to_string()),
+        token: token.map(|t| t.to_string()).filter(|t| !t.is_empty()),
     };
 
     Router::new()
@@ -272,6 +273,82 @@ async fn open_proxy_accepts_requests() {
     )
     .unwrap();
     assert_eq!(body["result"], "0xabc");
+}
+
+/// Empty-string token should behave as no auth — open proxy allows requests.
+#[tokio::test]
+async fn empty_token_allows_open_access() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(ok_response("0xabc")))
+        .mount(&server)
+        .await;
+
+    let app = setup(&server.uri(), Some("")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body["result"], "0xabc");
+}
+
+/// Empty-string token should not protect status endpoints.
+#[tokio::test]
+async fn empty_token_allows_status_without_auth() {
+    let server = MockServer::start().await;
+    let app = setup(&server.uri(), Some("")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/status")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// Empty-string token should not protect readiness endpoint.
+#[tokio::test]
+async fn empty_token_allows_readiness_without_auth() {
+    let server = MockServer::start().await;
+    let app = setup(&server.uri(), Some("")).await;
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/readiness")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // 503 is expected (no probe ran), but NOT 401
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 // ---------------------------------------------------------------------------

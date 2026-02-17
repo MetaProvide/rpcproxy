@@ -45,6 +45,12 @@ pub struct Config {
     /// When off, only critical messages and status changes are logged.
     #[arg(short, long, env = "RPCPROXY_VERBOSE", default_value = "false")]
     pub verbose: bool,
+
+    /// Run a health check against the running instance and exit.
+    /// Connects to http://localhost:<port>/health and exits with
+    /// code 0 if healthy, code 1 otherwise.
+    #[arg(long)]
+    pub health: bool,
 }
 
 pub fn validate_token(token: &str) -> Result<(), String> {
