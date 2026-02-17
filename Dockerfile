@@ -20,6 +20,6 @@ USER nobody
 EXPOSE 9000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -sf http://localhost:9000/health || exit 1
+    CMD wget -qO- http://localhost:9000/health || exit 1
 
 ENTRYPOINT ["rpcproxy"]
