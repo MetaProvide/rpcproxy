@@ -1,6 +1,6 @@
 [package]
 name = "rpcproxy"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2024"
 description = "High-performance JSON-RPC reverse proxy with smart caching and priority-based failover"
 license = "MIT"
